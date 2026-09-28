@@ -54,19 +54,84 @@ CREATE TABLE IF NOT EXISTS t_metp_fix_card (
 CREATE TABLE IF NOT EXISTS t_metp_move_bill (
   id bigint NOT NULL COMMENT '主键',
   bill_no varchar(64) DEFAULT NULL COMMENT '台站迁移变更核准单号',
-  node_no int DEFAULT NULL COMMENT '当前所在层 0..3',
+  site_no varchar(64) DEFAULT NULL COMMENT '台站编号',
+  site_name varchar(128) DEFAULT NULL COMMENT '台站名称',
+  reason varchar(500) DEFAULT NULL COMMENT '申请事由',
+  new_site_no varchar(64) DEFAULT NULL COMMENT '新址编号',
+  new_lng decimal(12,6) DEFAULT NULL COMMENT '新址经度',
+  new_lat decimal(12,6) DEFAULT NULL COMMENT '新址纬度',
+  new_alt decimal(12,2) DEFAULT NULL COMMENT '新址海拔(米)',
+  surface varchar(500) DEFAULT NULL COMMENT '新址下垫面情形',
+  old_field_status varchar(500) DEFAULT NULL COMMENT '旧址观测场现状',
+  compare_start datetime DEFAULT NULL COMMENT '新址对比观测起始时刻',
+  compare_end datetime DEFAULT NULL COMMENT '新址对比观测截止时刻',
+  new_station_built int DEFAULT '0' COMMENT '新站是否已建起 0未起 1已起(先建后迁把关依据,新站未起不许拆旧站)',
+  approve_doc_no varchar(64) DEFAULT NULL COMMENT '国务院气象主管机构批准文号',
+  round_no int DEFAULT '1' COMMENT '攒签轮次(发回市局一次加一轮,废签留旧轮)',
+  node_no int DEFAULT NULL COMMENT '当前所在层 0台站 1市局 2省局 3国务院气象主管机构',
   sign_mode int DEFAULT NULL COMMENT '同层核准方式 0任一人 1两名点齐',
   need_count int DEFAULT NULL COMMENT '本层应签人数',
   sign_count int DEFAULT NULL COMMENT '本层已签人数',
-  status int DEFAULT NULL COMMENT '报批情形 0在核 1已核讫 2已打回',
+  status int DEFAULT NULL COMMENT '报批情形 0在核 1已核讫 2已打回重审 3不予同意(终局)',
   del_flag int DEFAULT '0' COMMENT '删除标记 0正常 1删除',
   create_by varchar(64) DEFAULT NULL COMMENT '创建者',
   create_time datetime DEFAULT NULL COMMENT '创建时间',
   update_by varchar(64) DEFAULT NULL COMMENT '更新者',
   update_time datetime DEFAULT NULL COMMENT '更新时间',
   remark varchar(500) DEFAULT NULL COMMENT '备注',
-  PRIMARY KEY (id)
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_move_bill_no (bill_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='台站迁移变更逐级核准单';
+
+-- 画押记录：每一次落押/定否/驳回各存一条；同一分钟两名省局会签也是两条，绝不并条。
+-- 发回市局不删旧签，旧轮记录 valid=0 封存，台账只摆当前轮，废签与新签不同堂并摆。
+CREATE TABLE IF NOT EXISTS t_metp_move_sign (
+  id bigint NOT NULL COMMENT '主键',
+  bill_id bigint NOT NULL COMMENT '核准单主键',
+  round_no int NOT NULL COMMENT '落押时所在攒签轮次',
+  node_no int NOT NULL COMMENT '所处层 0台站 1市局 2省局 3国务院气象主管机构',
+  role_key varchar(32) NOT NULL COMMENT '点印角色 STATION/CITY/PROV_COMPARE/PROV_ORDER/NATIONAL',
+  signer varchar(64) NOT NULL COMMENT '落押人(服务层取自当前登录人,门脸不得代传)',
+  action int NOT NULL COMMENT '动作 1落押同意 2不予同意 3发回市局',
+  opinion varchar(500) DEFAULT NULL COMMENT '签批意见',
+  snapshot text DEFAULT NULL COMMENT '落定当时单据全样(屏幕所见即行内所存)',
+  valid_flag int DEFAULT '1' COMMENT '本轮是否有效 1有效 0发回后划废',
+  sign_time datetime DEFAULT NULL COMMENT '落押时刻',
+  del_flag int DEFAULT '0' COMMENT '删除标记 0正常 1删除',
+  create_by varchar(64) DEFAULT NULL COMMENT '创建者',
+  create_time datetime DEFAULT NULL COMMENT '创建时间',
+  update_by varchar(64) DEFAULT NULL COMMENT '更新者',
+  update_time datetime DEFAULT NULL COMMENT '更新时间',
+  remark varchar(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (id),
+  KEY idx_move_sign_bill (bill_id, round_no, valid_flag, node_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='台站迁移逐级画押记录';
+
+-- 新址启用通知：一律由已核讫的核准件一键带出，无人二次誊抄；一座台站只许一条。
+CREATE TABLE IF NOT EXISTS t_metp_move_notice (
+  id bigint NOT NULL COMMENT '主键',
+  notice_no varchar(64) DEFAULT NULL COMMENT '新址启用通知编号',
+  bill_id bigint NOT NULL COMMENT '来源核准单主键',
+  bill_no varchar(64) DEFAULT NULL COMMENT '来源核准单号',
+  site_no varchar(64) DEFAULT NULL COMMENT '台站编号',
+  site_name varchar(128) DEFAULT NULL COMMENT '台站名称',
+  new_site_no varchar(64) DEFAULT NULL COMMENT '新址编号',
+  new_lng decimal(12,6) DEFAULT NULL COMMENT '新址经度',
+  new_lat decimal(12,6) DEFAULT NULL COMMENT '新址纬度',
+  new_alt decimal(12,2) DEFAULT NULL COMMENT '新址海拔(米)',
+  compare_start datetime DEFAULT NULL COMMENT '对比观测起始时刻',
+  compare_end datetime DEFAULT NULL COMMENT '对比观测截止时刻',
+  approve_doc_no varchar(64) DEFAULT NULL COMMENT '批准文号',
+  del_flag int DEFAULT '0' COMMENT '删除标记 0正常 1删除',
+  create_by varchar(64) DEFAULT NULL COMMENT '创建者',
+  create_time datetime DEFAULT NULL COMMENT '创建时间',
+  update_by varchar(64) DEFAULT NULL COMMENT '更新者',
+  update_time datetime DEFAULT NULL COMMENT '更新时间',
+  remark varchar(500) DEFAULT NULL COMMENT '备注',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_move_notice_bill (bill_id),
+  UNIQUE KEY uk_move_notice_no (notice_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='台站新址启用通知';
 
 CREATE TABLE IF NOT EXISTS t_metp_qc_line (
   id bigint NOT NULL COMMENT '主键',

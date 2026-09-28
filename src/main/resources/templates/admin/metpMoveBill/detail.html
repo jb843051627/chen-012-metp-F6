@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.pollix.at/thymeleaf/shiro">
+<head th:with="id=${id}">
+    <th:block th:include="include :: header('台站迁移核准·画押')"/>
+</head>
+<body class="pear-container" data-bill-id="[[${id}]]">
+<div class="layui-card">
+    <div class="layui-card-header">
+        核准件 <span id="billNo" class="layui-badge layui-bg-blue"></span>
+        <span id="billRound" class="layui-badge layui-bg-gray"></span>
+        <span id="billStatus"></span>
+    </div>
+    <div class="layui-card-body">
+        <table class="layui-table" id="bill-fields" lay-skin="line">
+            <colgroup><col width="170"><col><col width="170"><col></colgroup>
+            <tbody>
+            <tr><td>台站编号</td><td id="f-siteNo"></td><td>台站名称</td><td id="f-siteName"></td></tr>
+            <tr><td>申请事由</td><td id="f-reason" colspan="3"></td></tr>
+            <tr><td>新址编号</td><td id="f-newSiteNo"></td><td>海拔(米)</td><td id="f-newAlt"></td></tr>
+            <tr><td>新址经度</td><td id="f-newLng"></td><td>新址纬度</td><td id="f-newLat"></td></tr>
+            <tr><td>下垫面情形</td><td id="f-surface" colspan="3"></td></tr>
+            <tr><td>旧址观测场现状</td><td id="f-oldFieldStatus" colspan="3"></td></tr>
+            <tr><td>对比观测起</td><td id="f-compareStart"></td><td>对比观测止</td><td id="f-compareEnd"></td></tr>
+            <tr><td>批准文号</td><td id="f-approveDocNo"></td><td>新站已建起</td><td id="f-built"></td></tr>
+            </tbody>
+        </table>
+        <div id="where-now" class="layui-bg-gray" style="padding:10px;border-radius:4px;margin-bottom:10px;"></div>
+    </div>
+</div>
+
+<div class="layui-card">
+    <div class="layui-card-header">本处尚欠（点印角色由账上现攒，页面不预设）</div>
+    <div class="layui-card-body">
+        <table class="layui-table" id="pending-table">
+            <colgroup><col width="90"><col><col width="360"></colgroup>
+            <thead><tr><th>第几处</th><th>点印角色</th><th>叩门动作</th></tr></thead>
+            <tbody id="pending-body"></tbody>
+        </table>
+        <div id="prov-sendback" style="display:none;margin-top:8px;">
+            <input type="text" id="sendbackOpinion" placeholder="发回缘由（默认：对比观测报告毛糙）" class="layui-input" style="width:60%;display:inline-block;">
+            <button class="pear-btn pear-btn-warning pear-btn-md" id="btn-sendback">
+                <i class="layui-icon layui-icon-return"></i> 省局发回市局（前签尽数划废）
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="layui-card">
+    <div class="layui-card-header">当前轮签记录（废签不同堂并摆）</div>
+    <div class="layui-card-body">
+        <table class="layui-table" id="sign-table">
+            <colgroup><col width="80"><col width="170"><col width="150"><col width="90"><col><col width="160"></colgroup>
+            <thead><tr><th>第几处</th><th>点印角色</th><th>落押人</th><th>动作</th><th>意见</th><th>落押时刻</th></tr></thead>
+            <tbody id="sign-body"></tbody>
+        </table>
+    </div>
+</div>
+
+<div class="layui-card" id="notice-card" style="display:none;">
+    <div class="layui-card-header">
+        新址启用通知（一键自核准件带出，无人誊抄）
+        <button class="pear-btn pear-btn-success pear-btn-md" id="btn-notice" style="float:right;">
+            <i class="layui-icon layui-icon-release"></i> 一键生成启用通知
+        </button>
+    </div>
+    <div class="layui-card-body" id="notice-body"></div>
+</div>
+
+<div class="layui-card">
+    <div class="layui-card-header">
+        逐步倒着核回来（四处签记录倒序，各带落定当时快照）
+        <button class="pear-btn pear-btn-primary pear-btn-sm" id="btn-trace" style="float:right;">倒核</button>
+    </div>
+    <div class="layui-card-body">
+        <table class="layui-table" id="trace-table" style="display:none;">
+            <colgroup><col width="80"><col width="170"><col width="150"><col><col width="100"></colgroup>
+            <thead><tr><th>第几处</th><th>点印角色</th><th>落押人</th><th>意见</th><th>当时快照</th></tr></thead>
+            <tbody id="trace-body"></tbody>
+        </table>
+    </div>
+</div>
+
+<th:block th:include="include :: footer"/>
+<script th:inline="javascript">
+    let BILL_ID = [[${id}]];
+</script>
+<script>
+    layui.use(['jquery', 'layer'], function () {
+        let $ = layui.jquery;
+        let MODULE_PATH = rootPath + "/metpMoveBill/";
+
+        let NODE_NAMES = ['第一处·台站', '第二处·市局', '第三处·省局', '第四处·国务院气象主管机构'];
+        let ROLE_NAMES = {
+            STATION: '台站', CITY: '市局',
+            PROV_COMPARE: '省局·对比观测与序列衔接', PROV_ORDER: '省局·先建后迁次序',
+            NATIONAL: '国务院气象主管机构'
+        };
+        let STATUS = {0: '在核', 1: '已核讫', 2: '已打回重审', 3: '不予同意'};
+        let ACTION = {1: '落押同意', 2: '不予同意', 3: '发回市局'};
+
+        function esc(v) {
+            return v == null ? '' : String(v).replace(/[&<>"]/g, function (c) {
+                return {'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c];
+            });
+        }
+
+        function post(url, data, ok) {
+            let loading = layer.load();
+            $.ajax({
+                url: url, data: data, dataType: 'json', type: 'post',
+                success: function (result) {
+                    layer.close(loading);
+                    if (result.code === 200) {
+                        if (ok) ok(result.data, result.msg);
+                    } else {
+                        layer.msg(result.msg || '动作被拦下，未作数', {icon: 2, time: 2500});
+                    }
+                },
+                error: function () {
+                    layer.close(loading);
+                    layer.msg('请求失败', {icon: 2});
+                }
+            });
+        }
+
+        function signRow(s) {
+            return '<tr><td>' + NODE_NAMES[s.nodeNo] + '</td><td>' + esc(ROLE_NAMES[s.roleKey] || s.roleKey)
+                + '</td><td>' + esc(s.signer) + '</td><td>' + esc(ACTION[s.action])
+                + '</td><td>' + esc(s.opinion) + '</td><td>' + esc(s.signTime) + '</td></tr>';
+        }
+
+        function render(data) {
+            let b = data.bill;
+            $('#billNo').text(b.billNo);
+            $('#billRound').text('第 ' + (b.roundNo || 1) + ' 轮');
+            $('#billStatus').html('<span class="layui-badge '
+                + (b.status === 1 ? 'layui-bg-green' : b.status === 3 ? '' : b.status === 2 ? 'layui-bg-orange' : 'layui-bg-blue')
+                + '">' + STATUS[b.status] + '</span>');
+            $('#f-siteNo').text(b.siteNo);
+            $('#f-siteName').text(b.siteName);
+            $('#f-reason').text(b.reason);
+            $('#f-newSiteNo').text(b.newSiteNo);
+            $('#f-newLng').text(b.newLng);
+            $('#f-newLat').text(b.newLat);
+            $('#f-newAlt').text(b.newAlt);
+            $('#f-surface').text(b.surface);
+            $('#f-oldFieldStatus').text(b.oldFieldStatus);
+            $('#f-compareStart').text(b.compareStart);
+            $('#f-compareEnd').text(b.compareEnd);
+            $('#f-approveDocNo').text(b.approveDocNo || '—');
+            $('#f-built').text(b.newStationBuilt === 1 ? '已建起' : '未建起');
+
+            let terminal = b.status === 1 || b.status === 3;
+            $('#where-now').html(data.message
+                + (data.pendingRoles && data.pendingRoles.length
+                    ? '　还差：' + data.pendingRoles.map(function (p) {
+                        return '<span class="layui-badge layui-bg-red" style="margin-left:4px;">' + esc(p.roleName) + '</span>';
+                    }).join('') : ''));
+
+            // 欠手与叩门按钮：摆什么全凭回音，页面不替服务层做主。
+            let ph = $('#pending-body').empty();
+            if (terminal || !data.pendingRoles || data.pendingRoles.length === 0) {
+                ph.append('<tr><td colspan="3" style="text-align:center;color:#999;">本处无欠手'
+                    + (b.status === 3 ? '（件已终局冻死，各栏冻住，要改只许另起新件）' : '') + '</td></tr>');
+            } else {
+                data.pendingRoles.forEach(function (p) {
+                    let docInput = p.roleKey === 'NATIONAL'
+                        ? '<input type="text" id="docNo" placeholder="批准文号（必填）" class="layui-input" style="width:170px;display:inline-block;"> ' : '';
+                    let opinion = '<input type="text" id="op-' + p.roleKey + '" placeholder="意见（可空）" class="layui-input" style="width:170px;display:inline-block;"> ';
+                    let buttons = docInput + opinion
+                        + '<button class="pear-btn pear-btn-primary pear-btn-sm btn-sign" data-role="' + p.roleKey + '">落押</button> '
+                        + '<button class="pear-btn pear-btn-danger pear-btn-sm btn-veto" data-role="' + p.roleKey + '">不予同意</button>';
+                    ph.append('<tr><td>' + NODE_NAMES[p.nodeNo] + '</td><td>' + esc(p.roleName) + '</td><td>' + buttons + '</td></tr>');
+                });
+            }
+            // 发回市局这一手只在件停省局、且未终局时摆出来。
+            $('#prov-sendback').toggle(!terminal && b.nodeNo === 2);
+
+            $('#sign-body').html((data.signs || []).map(signRow).join('')
+                || '<tr><td colspan="6" style="text-align:center;color:#999;">本轮尚无签记录</td></tr>');
+
+            // 核讫才可生通知；已有通知则直接摆出。
+            if (b.status === 1 || data.notice) {
+                $('#notice-card').show();
+                $('#btn-notice').toggle(b.status === 1 && !data.notice);
+                if (data.notice) renderNotice(data.notice);
+            } else {
+                $('#notice-card').hide();
+            }
+        }
+
+        function renderNotice(n) {
+            $('#notice-body').html(
+                '<table class="layui-table" lay-skin="line"><tbody>'
+                + '<tr><td width="170">通知编号</td><td>' + esc(n.noticeNo) + '</td></tr>'
+                + '<tr><td>来源核准单号</td><td>' + esc(n.billNo) + '</td></tr>'
+                + '<tr><td>台站编号/名称</td><td>' + esc(n.siteNo) + ' / ' + esc(n.siteName) + '</td></tr>'
+                + '<tr><td>新址编号</td><td>' + esc(n.newSiteNo) + '</td></tr>'
+                + '<tr><td>新址经纬度/海拔</td><td>' + esc(n.newLng) + ', ' + esc(n.newLat) + ' / ' + esc(n.newAlt) + ' 米</td></tr>'
+                + '<tr><td>对比观测起止</td><td>' + esc(n.compareStart) + ' 至 ' + esc(n.compareEnd) + '</td></tr>'
+                + '<tr><td>批准文号</td><td>' + esc(n.approveDocNo) + '</td></tr>'
+                + '</tbody></table>');
+        }
+
+        function load() {
+            $.getJSON(MODULE_PATH + 'detailData/' + BILL_ID, function (result) {
+                if (result.code === 200) render(result.data);
+                else layer.msg(result.msg, {icon: 2});
+            });
+        }
+
+        $('#pending-body').on('click', '.btn-sign', function () {
+            let role = $(this).data('role');
+            let opinion = $('#op-' + role).val();
+            let docNo = $('#docNo').val();
+            post(MODULE_PATH + 'sign', {id: BILL_ID, roleKey: role, opinion: opinion, approveDocNo: docNo},
+                function (d, msg) {
+                    layer.msg(msg, {icon: 1, time: 1500});
+                    render(d);
+                });
+        });
+
+        $('#pending-body').on('click', '.btn-veto', function () {
+            let role = $(this).data('role');
+            let opinion = $('#op-' + role).val();
+            layer.confirm('定否即终局，各栏冻住，要改只能另起新件。确定？', {icon: 3, title: '不予同意'}, function (idx) {
+                layer.close(idx);
+                post(MODULE_PATH + 'veto', {id: BILL_ID, roleKey: role, opinion: opinion},
+                    function (d, msg) {
+                        layer.msg(msg, {icon: 1, time: 2000});
+                        render(d);
+                    });
+            });
+        });
+
+        $('#btn-sendback').on('click', function () {
+            let opinion = $('#sendbackOpinion').val();
+            layer.confirm('发回市局：市局及以后签记录尽数划废，自市局重新攒起。确定？', {icon: 3, title: '发回市局'}, function (idx) {
+                layer.close(idx);
+                post(MODULE_PATH + 'sendBack', {id: BILL_ID, opinion: opinion},
+                    function (d, msg) {
+                        layer.msg(msg, {icon: 1, time: 2000});
+                        $('#trace-table').hide();
+                        render(d);
+                    });
+            });
+        });
+
+        $('#btn-notice').on('click', function () {
+            post(MODULE_PATH + 'notice', {id: BILL_ID}, function (d, msg) {
+                layer.msg(msg, {icon: 1, time: 2000});
+                render(d);
+            });
+        });
+
+        $('#btn-trace').on('click', function () {
+            $.getJSON(MODULE_PATH + 'trace/' + BILL_ID, function (result) {
+                if (result.code !== 200) {
+                    layer.msg(result.msg, {icon: 2});
+                    return;
+                }
+                let body = $('#trace-body').empty();
+                (result.data || []).forEach(function (s) {
+                    body.append('<tr><td>' + NODE_NAMES[s.nodeNo] + '</td><td>' + esc(ROLE_NAMES[s.roleKey] || s.roleKey)
+                        + '</td><td>' + esc(s.signer) + '</td><td>' + esc(s.opinion)
+                        + '</td><td><button class="pear-btn pear-btn-sm snapshot-view" data-json="'
+                        + encodeURIComponent(s.snapshot || '') + '">看当时屏幕</button></td></tr>');
+                });
+                $('#trace-table').show();
+            });
+        });
+
+        $('body').on('click', '.snapshot-view', function () {
+            let json;
+            try {
+                json = JSON.stringify(JSON.parse(decodeURIComponent($(this).data('json'))), null, 2);
+            } catch (e) {
+                json = decodeURIComponent($(this).data('json'));
+            }
+            layer.open({
+                type: 1, title: '落定当时单据全样（屏幕所见即行内所存）', area: ['640px', '520px'],
+                content: '<pre style="padding:12px;white-space:pre-wrap;word-break:break-all;">' + esc(json) + '</pre>'
+            });
+        });
+
+        load();
+    });
+</script>
+</body>
+</html>

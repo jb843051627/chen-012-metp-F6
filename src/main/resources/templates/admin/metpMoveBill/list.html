@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.pollix.at/thymeleaf/shiro">
+<head>
+    <th:block th:include="include :: header('台站迁移逐级核准台账')"/>
+</head>
+<body class="pear-container">
+<div class="layui-card">
+    <div class="layui-card-body">
+        <form class="layui-form" action="">
+            <div class="layui-form-item">
+                <label class="layui-form-label">核准单号</label>
+                <div class="layui-input-inline">
+                    <input type="text" name="billNo" placeholder="" class="layui-input">
+                </div>
+                <label class="layui-form-label">台站编号</label>
+                <div class="layui-input-inline">
+                    <input type="text" name="siteNo" placeholder="" class="layui-input">
+                </div>
+                <label class="layui-form-label">报批情形</label>
+                <div class="layui-input-inline">
+                    <select name="status" class="layui-input">
+                        <option value="">全部</option>
+                        <option value="0">在核</option>
+                        <option value="1">已核讫</option>
+                        <option value="2">已打回重审</option>
+                        <option value="3">不予同意</option>
+                    </select>
+                </div>
+                <button class="pear-btn pear-btn-md pear-btn-primary" lay-submit lay-filter="move-query">
+                    <i class="layui-icon layui-icon-search"></i> 查询
+                </button>
+                <button type="reset" class="pear-btn pear-btn-md">
+                    <i class="layui-icon layui-icon-refresh"></i> 重置
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+<div class="layui-card">
+    <div class="layui-card-body">
+        <table id="move-bill-table" lay-filter="move-bill-table"></table>
+    </div>
+</div>
+</body>
+
+<script type="text/html" id="move-toolbar">
+    <button shiro:hasPermission="metpMoveBill:create" class="pear-btn pear-btn-primary pear-btn-md" lay-event="add">
+        <i class="layui-icon layui-icon-add-1"></i> 台站报件（现行迁建申报表）
+    </button>
+</script>
+
+<script type="text/html" id="move-bar">
+    <button shiro:hasPermission="metpMoveBill:view" class="pear-btn pear-btn-primary pear-btn-sm" lay-event="detail">
+        <i class="layui-icon layui-icon-form"></i> 画押
+    </button>
+</script>
+
+<script type="text/html" id="move-node-tpl">
+    {{#  if(d.nodeNo === 0){ }}第一处·台站
+    {{#  } else if(d.nodeNo === 1){ }}第二处·市局
+    {{#  } else if(d.nodeNo === 2){ }}第三处·省局
+    {{#  } else if(d.nodeNo === 3){ }}第四处·国务院气象主管机构
+    {{#  } }}
+    <span class="layui-badge layui-bg-gray" style="margin-left:6px;">第 {{d.roundNo || 1}} 轮</span>
+</script>
+
+<script type="text/html" id="move-status-tpl">
+    {{#  if(d.status === 0){ }}<span class="layui-badge layui-bg-blue">在核</span>
+    {{#  } else if(d.status === 1){ }}<span class="layui-badge layui-bg-green">已核讫</span>
+    {{#  } else if(d.status === 2){ }}<span class="layui-badge layui-bg-orange">已打回重审</span>
+    {{#  } else if(d.status === 3){ }}<span class="layui-badge">不予同意</span>
+    {{#  } }}
+</script>
+
+<th:block th:include="include :: footer"/>
+<script>
+    layui.use(['table', 'form'], function () {
+        let table = layui.table;
+        let form = layui.form;
+        let MODULE_PATH = rootPath + "/metpMoveBill/";
+
+        let cols = [[
+            {title: 'ID', field: 'id', align: 'center', hide: true},
+            {title: '核准单号', field: 'billNo', align: 'center', width: 180},
+            {title: '台站编号', field: 'siteNo', align: 'center', width: 110},
+            {title: '台站名称', field: 'siteName', align: 'center', minWidth: 180},
+            {title: '新址编号', field: 'newSiteNo', align: 'center', width: 120},
+            {title: '此刻停在何处', field: 'nodeNo', align: 'center', width: 200, templet: '#move-node-tpl'},
+            {title: '本层已签/应签', field: 'signCount', align: 'center', width: 130,
+                templet: function (d) {
+                    return (d.signCount == null ? 0 : d.signCount) + ' / ' + (d.needCount == null ? '-' : d.needCount);
+                }},
+            {title: '报批情形', field: 'status', align: 'center', width: 120, templet: '#move-status-tpl'},
+            {title: '操作', toolbar: '#move-bar', align: 'center', width: 120, fixed: 'right'}
+        ]];
+
+        table.render({
+            elem: '#move-bill-table',
+            url: MODULE_PATH + 'list',
+            page: true,
+            method: 'get',
+            cols: cols,
+            skin: 'line',
+            toolbar: '#move-toolbar',
+            defaultToolbar: ['refresh', 'filter', 'print', 'exports']
+        });
+
+        table.on('tool(move-bill-table)', function (obj) {
+            if (obj.event === 'detail') {
+                window.open(MODULE_PATH + 'detail/' + obj.data.id, '_blank');
+            }
+        });
+
+        table.on('toolbar(move-bill-table)', function (obj) {
+            if (obj.event === 'add') {
+                layer.open({
+                    type: 2, title: '台站迁移变更核准申报表', shade: 0.1,
+                    area: ['860px', '640px'],
+                    content: MODULE_PATH + 'add'
+                });
+            }
+        });
+
+        form.on('submit(move-query)', function (data) {
+            table.reload('move-bill-table', {where: data.field, page: {curr: 1}});
+            return false;
+        });
+    });
+</script>
+</html>
