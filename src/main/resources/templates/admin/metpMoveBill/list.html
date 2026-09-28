@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org" xmlns:sec="http://www.pollix.at/thymeleaf/shiro">
+<head>
+    <th:block th:include="include :: header('台站迁移逐级核准（画押）')"/>
+</head>
+<body class="pear-container">
+<div class="layui-card">
+    <div class="layui-card-body">
+        <form class="layui-form" action="">
+            <div class="layui-form-item">
+                <label class="layui-form-label">核准单号</label>
+                <div class="layui-input-inline">
+                    <input type="text" name="billNo" placeholder="台站迁移变更核准单号" class="layui-input">
+                </div>
+                <label class="layui-form-label">报批情形</label>
+                <div class="layui-input-inline">
+                    <select name="status" class="layui-input">
+                        <option value="">全部</option>
+                        <option value="0">在核</option>
+                        <option value="1">已核讫</option>
+                        <option value="2">不予同意</option>
+                    </select>
+                </div>
+                <button class="pear-btn pear-btn-md pear-btn-primary" lay-submit lay-filter="bill-query">
+                    <i class="layui-icon layui-icon-search"></i>查询
+                </button>
+                <button type="reset" class="pear-btn pear-btn-md">
+                    <i class="layui-icon layui-icon-refresh"></i>重置
+                </button>
+                <button shiro:hasPermission="gen:metpMoveBill:submit" type="button"
+                        class="pear-btn pear-btn-md pear-btn-warming" lay-event="openSubmit">
+                    <i class="layui-icon layui-icon-add-1"></i>台站立单申报
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+<div class="layui-card">
+    <div class="layui-card-body">
+        <table id="bill-table" lay-filter="bill-table"></table>
+    </div>
+</div>
+
+<!-- 立单申报：沿用现行迁建申报表单式，缺料服务层自会挡回 -->
+<script type="text/html" id="submit-form-tpl">
+    <form class="layui-form" style="padding:20px 10px 0 0" id="submit-form">
+        <div class="layui-form-item">
+            <label class="layui-form-label">台站编号</label>
+            <div class="layui-input-block"><input type="text" name="siteNo" class="layui-input"></div>
+        </div>
+        <div class="layui-form-item">
+            <label class="layui-form-label">台站名称</label>
+            <div class="layui-input-block"><input type="text" name="siteName" class="layui-input"></div>
+        </div>
+        <div class="layui-form-item">
+            <label class="layui-form-label">申请事由</label>
+            <div class="layui-input-block"><textarea name="applyReason" class="layui-textarea"></textarea></div>
+        </div>
+        <div class="layui-form-item">
+            <label class="layui-form-label">新址编号</label>
+            <div class="layui-input-block"><input type="text" name="newSiteNo" class="layui-input"></div>
+        </div>
+        <div class="layui-form-item">
+            <label class="layui-form-label">新址经度</label>
+            <div class="layui-input-inline" style="width:170px"><input type="text" name="newLng" class="layui-input"></div>
+            <label class="layui-form-label" style="width:70px">纬度</label>
+            <div class="layui-input-inline" style="width:170px"><input type="text" name="newLat" class="layui-input"></div>
+        </div>
+        <div class="layui-form-item">
+            <label class="layui-form-label">海拔(米)</label>
+            <div class="layui-input-block"><input type="number" step="0.01" name="newAlt" class="layui-input"></div>
+        </div>
+        <div class="layui-form-item">
+            <label class="layui-form-label">下垫面情形</label>
+            <div class="layui-input-block"><textarea name="surface" class="layui-textarea"></textarea></div>
+        </div>
+        <div class="layui-form-item">
+            <label class="layui-form-label">旧址观测场现状</label>
+            <div class="layui-input-block"><textarea name="oldSiteStatus" class="layui-textarea"></textarea></div>
+        </div>
+        <div class="layui-form-item">
+            <label class="layui-form-label">对比观测起</label>
+            <div class="layui-input-inline" style="width:170px">
+                <input type="text" name="compareStart" id="compareStart" class="layui-input" autocomplete="off">
+            </div>
+            <label class="layui-form-label" style="width:40px">止</label>
+            <div class="layui-input-inline" style="width:170px">
+                <input type="text" name="compareEnd" id="compareEnd" class="layui-input" autocomplete="off">
+            </div>
+        </div>
+        <div class="layui-form-item" style="text-align:center">
+            <button type="button" class="pear-btn pear-btn-primary" lay-submit lay-filter="submit-do">报上去</button>
+            <button type="reset" class="pear-btn">重置</button>
+        </div>
+    </form>
+</script>
+
+<!-- 件停何处 + 倒核画押：内容全是服务层回音，页面不预设落定 -->
+<script type="text/html" id="detail-tpl">
+    <div style="padding:18px" id="detail-box"></div>
+</script>
+
+<th:block th:include="include :: footer"/>
+<script>
+    layui.use(['table', 'form', 'jquery', 'layer', 'laydate'], function () {
+        let table = layui.table, form = layui.form, $ = layui.jquery,
+            layer = layui.layer, laydate = layui.laydate;
+        let PATH = rootPath + "/metpMoveBill/";
+
+        let NODE_NAMES = ['台站', '市局', '省局', '国务院气象主管机构'];
+        let STATUS_NAMES = {0: '在核', 1: '已核讫', 2: '不予同意'};
+
+        table.render({
+            id: 'billTable',
+            elem: '#bill-table',
+            url: PATH + 'list',
+            page: true,
+            cols: [[
+                {field: 'billNo', title: '核准单号', width: 190},
+                {field: 'siteName', title: '台站', minWidth: 180},
+                {field: 'newSiteNo', title: '新址编号', width: 120},
+                {
+                    field: 'nodeNo', title: '此刻停在何处', width: 170, templet: function (d) {
+                        if (d.status === 2) return (NODE_NAMES[d.nodeNo] || '') + '（已冻）';
+                        if (d.status === 1) return '已核讫';
+                        return NODE_NAMES[d.nodeNo] === undefined ? '' : NODE_NAMES[d.nodeNo];
+                    }
+                },
+                {field: 'roundNo', title: '轮次', width: 70},
+                {
+                    field: 'signCount', title: '本处手印第', width: 110, templet: function (d) {
+                        return (d.signCount == null ? 0 : d.signCount) + '/' + (d.needCount == null ? '-' : d.needCount);
+                    }
+                },
+                {
+                    field: 'status', title: '报批情形', width: 100, templet: function (d) {
+                        return STATUS_NAMES[d.status] === undefined ? '' : STATUS_NAMES[d.status];
+                    }
+                },
+                {title: '操作', width: 300, toolbar: '#bill-bar', fixed: 'right'}
+            ]]
+        });
+
+        form.on('submit(bill-query)', function (data) {
+            table.reload('billTable', {where: data.field, page: {curr: 1}});
+            return false;
+        });
+
+        table.on('toolbar(bill-table)', function (obj) {
+            if (obj.event === 'openSubmit') {
+                openSubmit();
+            }
+        });
+
+        table.on('tool(bill-table)', function (obj) {
+            let d = obj.data;
+            if (obj.event === 'detail') openDetail(d.id);
+            if (obj.event === 'agree') openAgree(d);
+            if (obj.event === 'veto') openVeto(d);
+            if (obj.event === 'reject') doReject(d);
+            if (obj.event === 'notice') doNotice(d);
+        });
+
+        function openSubmit() {
+            layer.open({
+                type: 1, title: '台站迁移立单申报', area: ['720px', '640px'],
+                content: $('#submit-form-tpl').html(),
+                success: function () {
+                    laydate.render({elem: '#compareStart', type: 'datetime'});
+                    laydate.render({elem: '#compareEnd', type: 'datetime'});
+                    form.render();
+                    form.on('submit(submit-do)', function (data) {
+                        $.post(PATH + 'submit', data.field, function (res) {
+                            afterAction(res, function () {
+                                layer.closeAll();
+                                table.reload('billTable');
+                            });
+                        });
+                        return false;
+                    });
+                }
+            });
+        }
+
+        // 可落哪一押、还差谁签，先问服务层回音，不由页面预设。
+        function openAgree(d) {
+            $.get(PATH + 'snapshot', {id: d.id}, function (res) {
+                let r = res.data;
+                if (!r) {
+                    layui.pear ? layui.pear.error(res.msg) : layer.msg(res.msg, {icon: 2});
+                    return;
+                }
+                if (r.frozen || r.finished || !r.pendingRoles || r.pendingRoles.length === 0) {
+                    layer.msg(r.message || '此处已无押可落', {icon: 2});
+                    return;
+                }
+                let opts = r.pendingRoles.map(function (k, i) {
+                    return '<option value="' + k + '">' + r.pendingRoleNames[i] + '</option>';
+                }).join('');
+                let nationExtra = r.nodeNo === 3
+                    ? '<div class="layui-form-item"><label class="layui-form-label">批准文号</label>'
+                    + '<div class="layui-input-block"><input class="layui-input" id="act-approve-no"></div></div>' : '';
+                layer.open({
+                    type: 1, title: '落押（' + r.nodeName + '）', area: ['560px', '380px'],
+                    content: '<form class="layui-form" style="padding:20px 20px 0 0">'
+                    + '<div class="layui-form-item"><label class="layui-form-label">以何职权</label>'
+                    + '<div class="layui-input-block"><select id="act-role">' + opts + '</select></div></div>'
+                    + nationExtra
+                    + '<div class="layui-form-item"><label class="layui-form-label">意见</label>'
+                    + '<div class="layui-input-block"><textarea id="act-opinion" class="layui-textarea"></textarea></div></div>'
+                    + '<div class="layui-form-item" style="text-align:center"><button type="button" '
+                    + 'class="pear-btn pear-btn-primary" id="act-confirm">落押</button></div></form>',
+                    success: function () {
+                        form.render();
+                        $('#act-confirm').on('click', function () {
+                            $.post(PATH + 'agree', {
+                                id: d.id, roleKey: $('#act-role').val(),
+                                opinion: $('#act-opinion').val(),
+                                approveNo: $('#act-approve-no').val()
+                            }, function (res2) {
+                                afterAction(res2, function () {
+                                    layer.closeAll();
+                                    table.reload('billTable');
+                                });
+                            });
+                        });
+                    }
+                });
+            });
+        }
+
+        function openVeto(d) {
+            $.get(PATH + 'snapshot', {id: d.id}, function (res) {
+                let r = res.data;
+                if (!r || r.frozen || r.finished || !r.allRoles || r.allRoles.length === 0) {
+                    layer.msg(r ? (r.message || '此处落不下否') : res.msg, {icon: 2});
+                    return;
+                }
+                let opts = r.allRoles.map(function (k, i) {
+                    return '<option value="' + k + '">' + r.allRoleNames[i] + '</option>';
+                }).join('');
+                layer.open({
+                    type: 1, title: '落「不予同意」——件即刻终止冻住', area: ['520px', '330px'],
+                    content: '<form class="layui-form" style="padding:20px 20px 0 0">'
+                    + '<div class="layui-form-item"><label class="layui-form-label">以何职权</label>'
+                    + '<div class="layui-input-block"><select id="veto-role">' + opts + '</select></div></div>'
+                    + '<div class="layui-form-item"><label class="layui-form-label">意见</label>'
+                    + '<div class="layui-input-block"><textarea id="veto-opinion" class="layui-textarea"></textarea></div></div>'
+                    + '<div class="layui-form-item" style="text-align:center"><button type="button" '
+                    + 'class="pear-btn pear-btn-danger" id="veto-confirm">定否</button></div></form>',
+                    success: function () {
+                        form.render();
+                        $('#veto-confirm').on('click', function () {
+                            $.post(PATH + 'veto', {
+                                id: d.id, roleKey: $('#veto-role').val(),
+                                opinion: $('#veto-opinion').val()
+                            }, function (res2) {
+                                afterAction(res2, function () {
+                                    layer.closeAll();
+                                    table.reload('billTable');
+                                });
+                            });
+                        });
+                    }
+                });
+            });
+        }
+
+        function doReject(d) {
+            layer.confirm('省局驳回：件发回市局，前头各签划去留痕，自市局重新攒起。确认？',
+                {icon: 3, title: '省局驳回'}, function () {
+                    layer.prompt({title: '驳回事由（对比观测报告何处毛糙）', formType: 2, area: ['460px', '160px']},
+                        function (opinion) {
+                            $.post(PATH + 'reject', {id: d.id, opinion: opinion}, function (res) {
+                                afterAction(res, function () {
+                                    layer.closeAll();
+                                    table.reload('billTable');
+                                });
+                            });
+                        });
+                });
+        }
+
+        function doNotice(d) {
+            $.post(PATH + 'notice', {id: d.id}, function (res) {
+                afterAction(res, function () {
+                    table.reload('billTable');
+                    if (res.data && res.data.notice) {
+                        let n = res.data.notice;
+                        layer.alert('新址启用通知<br>通知编号：' + n.noticeNo
+                            + '<br>新址编号：' + n.newSiteNo
+                            + '<br>经纬度：' + n.newLng + '，' + n.newLat
+                            + '<br>对比观测：' + (n.compareStart || '') + ' 至 ' + (n.compareEnd || '')
+                            + '<br>批准文号：' + (n.approveNo || ''),
+                            {title: '通知已生成（字段自核准件誊带）', area: ['520px', '280px']});
+                    }
+                });
+            });
+        }
+
+        function openDetail(id) {
+            layer.open({
+                type: 1, title: '件停何处 · 画押倒核', area: ['820px', '600px'],
+                content: $('#detail-tpl').html(),
+                success: function () {
+                    $.get(PATH + 'snapshot', {id: id}, function (res) {
+                        let r = res.data, html = '';
+                        if (r) {
+                            html += '<table class="layui-table">';
+                            html += row('件停何处', r.nodeName + '（第 ' + (r.roundNo || 1) + ' 轮）');
+                            html += row('报批情形', r.frozen ? '不予同意（已冻）' : (r.finished ? '已核讫' : '在核'));
+                            if (!r.frozen && !r.finished) {
+                                html += row('本处手印', (r.signCount == null ? 0 : r.signCount) + '/' + r.needCount);
+                                html += row('还差谁签', (r.pendingRoleNames || []).join('、') || '—');
+                            }
+                            html += row('回音', r.message || '');
+                            html += '</table>';
+                        }
+                        $('#detail-box').html(html + '<fieldset class="layui-elem-field"><legend>逐步倒着核回来（含前轮废签）</legend><div id="trace-box">加载中…</div></fieldset>');
+                    });
+                    $.get(PATH + 'trace', {id: id}, function (res) {
+                        let list = res.data || [], th = '';
+                        if (list.length) {
+                            th = '<table class="layui-table"><thead><tr><th>轮次</th><th>处</th><th>职权</th><th>画押人</th><th>动作</th><th>意见</th><th>时刻</th></tr></thead><tbody>';
+                            list.forEach(function (s) {
+                                let act = {AGREE: '落押', VETO: '不予同意', REJECT: '驳回'}[s.action] || s.action;
+                                th += '<tr><td>' + s.roundNo + '</td><td>' + (NODE_NAMES[s.nodeNo] || '')
+                                    + '</td><td>' + s.roleKey + '</td><td>' + s.signer + '</td><td>' + act
+                                    + '</td><td>' + (s.opinion || '') + '</td><td>' + (s.createTime || '') + '</td></tr>';
+                            });
+                            th += '</tbody></table>';
+                        } else {
+                            th = '<span style="color:#999">尚无画押记录</span>';
+                        }
+                        $('#trace-box').html(th);
+                    });
+                }
+            });
+        }
+
+        function row(k, v) {
+            return '<tr><td style="width:130px">' + k + '</td><td>' + (v == null || v === '' ? '—' : v) + '</td></tr>';
+        }
+
+        // 回音即权柄：500 即此押未作数，页面不替它改口。
+        function afterAction(res, ok) {
+            if (res.code === 200) {
+                layer.msg(res.msg || '动作作数', {icon: 1, time: 1200}, ok);
+            } else {
+                layer.alert(res.msg || '动作未被受理', {title: '此押未作数', icon: 2});
+            }
+        }
+    });
+</script>
+
+<script type="text/html" id="bill-bar">
+    <button shiro:hasPermission="gen:metpMoveBill:view" class="pear-btn pear-btn-sm" lay-event="detail">停何处</button>
+    {{# if(d.status === 0 && d.nodeNo > 0){ }}
+    <button shiro:hasPermission="gen:metpMoveBill:agree" class="pear-btn pear-btn-primary pear-btn-sm" lay-event="agree">落押</button>
+    <button shiro:hasPermission="gen:metpMoveBill:veto" class="pear-btn pear-btn-danger pear-btn-sm" lay-event="veto">定否</button>
+    {{# } }}
+    {{# if(d.status === 0 && d.nodeNo === 2){ }}
+    <button shiro:hasPermission="gen:metpMoveBill:reject" class="pear-btn pear-btn-warming pear-btn-sm" lay-event="reject">驳回</button>
+    {{# } }}
+    {{# if(d.status === 1){ }}
+    <button shiro:hasPermission="gen:metpMoveBill:notice" class="pear-btn pear-btn-normal pear-btn-sm" lay-event="notice">启用通知</button>
+    {{# } }}
+</script>
+</body>
+</html>
